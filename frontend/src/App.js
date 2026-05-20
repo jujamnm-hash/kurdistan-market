@@ -1,6 +1,8 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import socket from './socket';
+import { db } from './firebase';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import API from './api';
 import KurdistanMap from './components/KurdistanMap';
 import SearchPanel from './components/SearchPanel';
 import SellerPanel from './components/SellerPanel';
@@ -18,26 +20,23 @@ const AppContent = () => {
   const [searchResults, setSearchResults] = useState(null);
   const [showSidebar, setShowSidebar] = useState(true);
   const [locating, setLocating] = useState(false);
-  const [socketConnected, setSocketConnected] = useState(false);
+  const [firestoreConnected, setFirestoreConnected] = useState(false);
   const [showManualLocation, setShowManualLocation] = useState(false);
+  const locationIntervalRef = useRef(null);
 
-  // Connect socket & listen for online sellers
+  // Listen for online sellers via Firestore onSnapshot
   useEffect(() => {
-    socket.connect();
-    socket.emit('sellers:getAll');
-
-    socket.on('connect', () => setSocketConnected(true));
-    socket.on('disconnect', () => setSocketConnected(false));
-    socket.on('sellers:update', (sellers) => {
-      setOnlineSellers(sellers);
-    });
-
-    return () => {
-      socket.off('connect');
-      socket.off('disconnect');
-      socket.off('sellers:update');
-      socket.disconnect();
-    };
+    const q = query(collection(db, 'sellers'), where('isOnline', '==', true));
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const sellers = snapshot.docs.map(doc => ({ _id: doc.id, ...doc.data() }));
+        setOnlineSellers(sellers);
+        setFirestoreConnected(true);
+      },
+      () => setFirestoreConnected(false)
+    );
+    return unsubscribe;
   }, []);
 
   // Get user location
@@ -60,42 +59,51 @@ const AppContent = () => {
     getUserLocation();
   }, []);
 
+  // Go offline when browser closes
+  useEffect(() => {
+    const handleUnload = () => {
+      if (isOnline) API.put('/sellers/offline').catch(() => {});
+    };
+    window.addEventListener('beforeunload', handleUnload);
+    return () => window.removeEventListener('beforeunload', handleUnload);
+  }, [isOnline]);
+
   // Seller goes online
-  const handleGoOnline = useCallback(() => {
+  const handleGoOnline = useCallback(async () => {
     if (!user || role !== 'seller') return;
     if (!userLocation) {
       alert('تکایە پێشتر ئیجازەی شوێن بدە');
       getUserLocation();
       return;
     }
-    const token = localStorage.getItem('token');
-    socket.emit('seller:online', {
-      sellerId: user._id,
-      token,
-      location: { lat: userLocation[0], lng: userLocation[1], address: '' }
-    });
-    setIsOnline(true);
-
-    // Keep updating location every 30 seconds
-    const interval = setInterval(() => {
-      navigator.geolocation.getCurrentPosition((pos) => {
-        const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-        socket.emit('seller:updateLocation', { sellerId: user._id, location: loc });
-        setUserLocation([pos.coords.latitude, pos.coords.longitude]);
+    try {
+      await API.put('/sellers/online', {
+        location: { lat: userLocation[0], lng: userLocation[1], address: '' }
       });
-    }, 30000);
+      setIsOnline(true);
 
-    socket._locationInterval = interval;
+      // Keep updating location every 30 seconds
+      locationIntervalRef.current = setInterval(() => {
+        navigator.geolocation.getCurrentPosition((pos) => {
+          const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          API.put('/sellers/location', { location: loc }).catch(() => {});
+          setUserLocation([pos.coords.latitude, pos.coords.longitude]);
+        });
+      }, 30000);
+    } catch (err) {
+      alert('هەڵە لە ئەکتیف کردن');
+    }
   }, [user, role, userLocation, getUserLocation]);
 
   // Seller goes offline
-  const handleGoOffline = useCallback(() => {
-    if (socket._locationInterval) {
-      clearInterval(socket._locationInterval);
+  const handleGoOffline = useCallback(async () => {
+    if (locationIntervalRef.current) {
+      clearInterval(locationIntervalRef.current);
+      locationIntervalRef.current = null;
     }
-    socket.disconnect();
-    socket.connect();
-    socket.emit('sellers:getAll');
+    try {
+      await API.put('/sellers/offline');
+    } catch (err) { /* ignore */ }
     setIsOnline(false);
   }, []);
 
@@ -131,7 +139,7 @@ const AppContent = () => {
         </div>
 
         {/* Connection warning */}
-        {!socketConnected && (
+        {!firestoreConnected && (
           <div style={{
             position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)',
             background: '#fef3c7', color: '#92400e', padding: '8px 18px',
