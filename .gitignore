@@ -8,6 +8,7 @@ backend/.env
 frontend/.env
 frontend/.env.local
 frontend/.env.production
+functions/.env
 
 # Build output
 frontend/build/
