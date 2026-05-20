@@ -2,7 +2,7 @@ services:
   - type: web
     name: kurdistan-market-backend
     runtime: node
-    rootDir: backend
+    rootDir: functions
     buildCommand: npm install
     startCommand: node server.js
     envVars:
@@ -10,12 +10,10 @@ services:
         value: production
       - key: PORT
         value: 10000
-      - key: MONGO_URI
-        sync: false       # Set manually in Render dashboard
       - key: JWT_SECRET
         sync: false       # Set manually in Render dashboard
-      - key: JWT_EXPIRE
-        value: 7d
       - key: FRONTEND_URL
-        sync: false       # Set manually after Netlify deploy
+        sync: false       # Set to Firebase Hosting URL after deploy
+      - key: FIREBASE_SERVICE_ACCOUNT
+        sync: false       # Paste service account JSON string here
     healthCheckPath: /api/health

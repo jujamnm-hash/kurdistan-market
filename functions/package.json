@@ -1,9 +1,9 @@
 {
   "name": "functions",
-  "description": "Firebase Cloud Functions - Kurdistan Market",
+  "description": "Kurdistan Market Backend - Firebase Firestore + Express",
   "scripts": {
-    "serve": "firebase emulators:start --only functions",
-    "deploy": "firebase deploy --only functions"
+    "start": "node server.js",
+    "dev": "node server.js"
   },
   "engines": { "node": "20" },
   "main": "index.js",
