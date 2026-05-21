@@ -1,10 +1,15 @@
 import React, { useState } from 'react';
-import API from '../api';
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { auth, db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
+
+// Use phone number as Firebase Auth email (phone@kurdistan.app)
+const toEmail = (phone) => `${phone.replace(/\s/g, '')}@kurdistan.app`;
 
 const AuthModal = ({ onClose }) => {
   const { login } = useAuth();
-  const [tab, setTab] = useState('login'); // login | register
+  const [tab, setTab] = useState('login');
   const [role, setRole] = useState('traveler');
   const [form, setForm] = useState({ name: '', phone: '', password: '', description: '', road: '' });
   const [error, setError] = useState('');
@@ -15,21 +20,36 @@ const AuthModal = ({ onClose }) => {
     setError('');
     setLoading(true);
     try {
-      const endpoint = tab === 'login'
-        ? `/auth/${role}/login`
-        : `/auth/${role}/register`;
+      const email = toEmail(form.phone);
 
-      const payload = { ...form };
-      if (role === 'seller' && form.road) {
-        payload.location = { road: form.road };
+      if (tab === 'register') {
+        const cred = await createUserWithEmailAndPassword(auth, email, form.password);
+        const uid = cred.user.uid;
+        const collection = role === 'seller' ? 'sellers' : 'travelers';
+        const data = role === 'seller'
+          ? { name: form.name, phone: form.phone, description: form.description || '', location: { road: form.road || '', lat: null, lng: null }, isOnline: false, products: [], rating: { avg: 0, count: 0, ratedBy: [] } }
+          : { name: form.name, phone: form.phone, savedSellers: [] };
+        await setDoc(doc(db, collection, uid), data);
+        login({ _id: uid, ...data }, role);
+      } else {
+        const cred = await signInWithEmailAndPassword(auth, email, form.password);
+        const uid = cred.user.uid;
+        const collection = role === 'seller' ? 'sellers' : 'travelers';
+        const snap = await getDoc(doc(db, collection, uid));
+        if (!snap.exists()) {
+          await auth.signOut();
+          throw new Error(role === 'seller' ? 'ئەم ژمارەیە بەعنوانی فرۆشیار تۆمار نەکراوە' : 'ئەم ژمارەیە بەعنوانی گەشتیار تۆمار نەکراوە');
+        }
+        login({ _id: uid, ...snap.data() }, role);
       }
-
-      const res = await API.post(endpoint, payload);
-      const userData = res.data.seller || res.data.traveler;
-      login(res.data.token, userData, role);
       onClose();
     } catch (err) {
-      setError(err.response?.data?.error || 'هەڵەیەک ڕوویدا، دووبارە هەوڵ بدەرەوە');
+      const code = err.code;
+      if (code === 'auth/email-already-in-use') setError('ئەم ژمارەیە پێشتر تۆمارکراوە');
+      else if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') setError('ژمارە یان وشەی نهێنی هەڵەیە');
+      else if (code === 'auth/user-not-found') setError('ئەم ژمارەیە تۆمار نەکراوە');
+      else if (code === 'auth/weak-password') setError('وشەی نهێنی پێویستە لانیکەم ٦ پیت بێت');
+      else setError(err.message || 'هەڵەیەک ڕوویدا، دووبارە هەوڵ بدەرەوە');
     } finally {
       setLoading(false);
     }
@@ -140,3 +160,4 @@ const AuthModal = ({ onClose }) => {
 };
 
 export default AuthModal;
+

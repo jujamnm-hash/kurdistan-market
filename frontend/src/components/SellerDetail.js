@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import API from '../api';
+import { doc, updateDoc, arrayUnion, arrayRemove, getDoc } from 'firebase/firestore';
+import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 
 const SellerDetail = ({ seller, userLocation, onClose }) => {
@@ -12,10 +13,24 @@ const SellerDetail = ({ seller, userLocation, onClose }) => {
   const handleRate = async () => {
     if (ratingVal < 1 || ratingVal > 5) return;
     try {
-      await API.post(`/sellers/${seller._id}/rate`, { rating: ratingVal });
+      const sellerSnap = await getDoc(doc(db, 'sellers', seller._id));
+      const sellerData = sellerSnap.data();
+      if (sellerData?.rating?.ratedBy?.includes(user._id)) {
+        setRatingMsg('پێشتر هەڵسەنگاندنت کردووە');
+        return;
+      }
+      const oldCount = sellerData?.rating?.count || 0;
+      const oldAvg = sellerData?.rating?.avg || 0;
+      const newCount = oldCount + 1;
+      const newAvg = ((oldAvg * oldCount) + ratingVal) / newCount;
+      await updateDoc(doc(db, 'sellers', seller._id), {
+        'rating.avg': newAvg,
+        'rating.count': newCount,
+        'rating.ratedBy': arrayUnion(user._id)
+      });
       setRatingMsg('سپاس بۆ هەڵسەنگاندنەکەت! ✅');
     } catch (err) {
-      setRatingMsg(err.response?.data?.error || 'هەڵەیەک ڕوویدا');
+      setRatingMsg('هەڵەیەک ڕوویدا');
     }
   };
 
@@ -23,12 +38,12 @@ const SellerDetail = ({ seller, userLocation, onClose }) => {
     if (!user || role !== 'traveler') return;
     try {
       if (saved) {
-        const res = await API.delete(`/travelers/save-seller/${seller._id}`);
-        updateUser(res.data.traveler);
+        await updateDoc(doc(db, 'travelers', user._id), { savedSellers: arrayRemove(seller._id) });
+        updateUser({ savedSellers: user.savedSellers?.filter(id => id !== seller._id) });
         setSaved(false);
       } else {
-        const res = await API.post(`/travelers/save-seller/${seller._id}`);
-        updateUser(res.data.traveler);
+        await updateDoc(doc(db, 'travelers', user._id), { savedSellers: arrayUnion(seller._id) });
+        updateUser({ savedSellers: [...(user.savedSellers || []), seller._id] });
         setSaved(true);
       }
     } catch { /* ignore */ }

@@ -1,8 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { db } from './firebase';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
-import API from './api';
+import { collection, query, where, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import KurdistanMap from './components/KurdistanMap';
 import SearchPanel from './components/SearchPanel';
 import SellerPanel from './components/SellerPanel';
@@ -62,11 +61,13 @@ const AppContent = () => {
   // Go offline when browser closes
   useEffect(() => {
     const handleUnload = () => {
-      if (isOnline) API.put('/sellers/offline').catch(() => {});
+      if (isOnline && user?._id) {
+        updateDoc(doc(db, 'sellers', user._id), { isOnline: false }).catch(() => {});
+      }
     };
     window.addEventListener('beforeunload', handleUnload);
     return () => window.removeEventListener('beforeunload', handleUnload);
-  }, [isOnline]);
+  }, [isOnline, user]);
 
   // Seller goes online
   const handleGoOnline = useCallback(async () => {
@@ -77,8 +78,9 @@ const AppContent = () => {
       return;
     }
     try {
-      await API.put('/sellers/online', {
-        location: { lat: userLocation[0], lng: userLocation[1], address: '' }
+      await updateDoc(doc(db, 'sellers', user._id), {
+        isOnline: true,
+        location: { ...user.location, lat: userLocation[0], lng: userLocation[1], address: '' }
       });
       setIsOnline(true);
 
@@ -86,7 +88,7 @@ const AppContent = () => {
       locationIntervalRef.current = setInterval(() => {
         navigator.geolocation.getCurrentPosition((pos) => {
           const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-          API.put('/sellers/location', { location: loc }).catch(() => {});
+          updateDoc(doc(db, 'sellers', user._id), { 'location.lat': loc.lat, 'location.lng': loc.lng }).catch(() => {});
           setUserLocation([pos.coords.latitude, pos.coords.longitude]);
         });
       }, 30000);
@@ -101,11 +103,11 @@ const AppContent = () => {
       clearInterval(locationIntervalRef.current);
       locationIntervalRef.current = null;
     }
-    try {
-      await API.put('/sellers/offline');
-    } catch (err) { /* ignore */ }
+    if (user?._id) {
+      try { await updateDoc(doc(db, 'sellers', user._id), { isOnline: false }); } catch { /* ignore */ }
+    }
     setIsOnline(false);
-  }, []);
+  }, [user]);
 
   // Display sellers: search results override online sellers
   const displaySellers = searchResults !== null

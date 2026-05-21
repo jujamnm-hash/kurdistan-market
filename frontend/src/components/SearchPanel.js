@@ -1,5 +1,14 @@
 import React, { useState } from 'react';
-import API from '../api';
+import { collection, getDocs } from 'firebase/firestore';
+import { db } from '../firebase';
+
+const calcDistance = (lat1, lng1, lat2, lng2) => {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
 
 const PRODUCT_CATEGORIES = [
   { label: 'هەموو', value: '' },
@@ -24,25 +33,37 @@ const SearchPanel = ({ userLocation, onResults, onSelectSeller }) => {
     setLoading(true);
     setSearched(true);
     try {
+      const snapshot = await getDocs(collection(db, 'sellers'));
+      const allSellers = snapshot.docs.map(d => ({ _id: d.id, ...d.data() }));
+
+      const searchLower = q.trim().toLowerCase();
+      const matching = allSellers.filter(s =>
+        s.products?.some(p => p.name.toLowerCase().includes(searchLower))
+      );
+
       const lat = userLocation ? userLocation[0] : 36.1901;
       const lng = userLocation ? userLocation[1] : 44.0091;
 
-      // Run both searches in parallel: online nearby + all sellers with product
-      const [nearbyRes, allRes] = await Promise.all([
-        API.get(`/sellers/nearby?radius=100&lat=${lat}&lng=${lng}&product=${encodeURIComponent(q.trim())}`),
-        API.get(`/products/search?q=${encodeURIComponent(q.trim())}`)
-      ]);
+      const withDistance = matching.map(s => {
+        if (s.location?.lat && s.location?.lng) {
+          const dist = calcDistance(lat, lng, s.location.lat, s.location.lng);
+          return {
+            ...s,
+            distanceText: dist < 1 ? `${Math.round(dist * 1000)} مەتر` : `${dist.toFixed(1)} کم`,
+            travelTimeText: `${Math.round(dist / 60 * 60)} خولەک`
+          };
+        }
+        return s;
+      });
 
-      const onlineSellers = nearbyRes.data.sellers || [];
-      const onlineIds = new Set(onlineSellers.map(s => String(s._id)));
+      withDistance.sort((a, b) => {
+        if (a.isOnline && !b.isOnline) return -1;
+        if (!a.isOnline && b.isOnline) return 1;
+        return 0;
+      });
 
-      // Add offline sellers from all-search that aren't already in online results
-      const offlineSellers = (allRes.data.sellers || [])
-        .filter(s => !onlineIds.has(String(s._id)) && !s.isOnline);
-
-      const combined = [...onlineSellers, ...offlineSellers];
-      setResults(combined);
-      onResults(combined);
+      setResults(withDistance);
+      onResults(withDistance);
     } catch (err) {
       setResults([]);
     } finally {

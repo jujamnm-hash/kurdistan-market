@@ -1,42 +1,54 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { auth, db } from '../firebase';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
 
 const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
-  const [role, setRole] = useState(null); // 'seller' | 'traveler'
+  const [role, setRole] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    const savedUser = localStorage.getItem('user');
-    const savedRole = localStorage.getItem('role');
-    if (token && savedUser) {
-      setUser(JSON.parse(savedUser));
-      setRole(savedRole);
-    }
-    setLoading(false);
+    const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        const sellerSnap = await getDoc(doc(db, 'sellers', firebaseUser.uid));
+        if (sellerSnap.exists()) {
+          setUser({ _id: firebaseUser.uid, ...sellerSnap.data() });
+          setRole('seller');
+        } else {
+          const travelerSnap = await getDoc(doc(db, 'travelers', firebaseUser.uid));
+          if (travelerSnap.exists()) {
+            setUser({ _id: firebaseUser.uid, ...travelerSnap.data() });
+            setRole('traveler');
+          } else {
+            setUser(null);
+            setRole(null);
+          }
+        }
+      } else {
+        setUser(null);
+        setRole(null);
+      }
+      setLoading(false);
+    });
+    return unsub;
   }, []);
 
-  const login = (token, userData, userRole) => {
-    localStorage.setItem('token', token);
-    localStorage.setItem('user', JSON.stringify(userData));
-    localStorage.setItem('role', userRole);
+  const login = (userData, userRole) => {
     setUser(userData);
     setRole(userRole);
   };
 
-  const logout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    localStorage.removeItem('role');
+  const logout = async () => {
+    await signOut(auth);
     setUser(null);
     setRole(null);
   };
 
   const updateUser = (userData) => {
-    localStorage.setItem('user', JSON.stringify(userData));
-    setUser(userData);
+    setUser(prev => ({ ...prev, ...userData }));
   };
 
   return (
@@ -47,3 +59,4 @@ export const AuthProvider = ({ children }) => {
 };
 
 export const useAuth = () => useContext(AuthContext);
+

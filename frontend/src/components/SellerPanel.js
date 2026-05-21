@@ -1,5 +1,6 @@
 ﻿import React, { useState, useEffect } from 'react';
-import API from '../api';
+import { doc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
+import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 
 const SellerPanel = ({ onGoOnline, onGoOffline, isOnline }) => {
@@ -28,18 +29,15 @@ const SellerPanel = ({ onGoOnline, onGoOffline, isOnline }) => {
     e.preventDefault();
     setLoading(true);
     try {
-      const res = await API.post('/sellers/products', {
-        name: product.name,
-        price: parseFloat(product.price),
-        unit: product.unit
-      });
-      updateUser(res.data.seller);
+      const newProduct = { id: Date.now().toString(), name: product.name, price: parseFloat(product.price), unit: product.unit };
+      await updateDoc(doc(db, 'sellers', user._id), { products: arrayUnion(newProduct) });
+      updateUser({ products: [...(user.products || []), newProduct] });
       setProduct({ name: '', price: '', unit: 'کیلۆ' });
       setShowAddProduct(false);
       setMsg('✅ کالا زیاد کرا');
       setTimeout(() => setMsg(''), 3000);
     } catch (err) {
-      setMsg('❌ ' + (err.response?.data?.error || 'هەڵەیەک ڕوویدا'));
+      setMsg('❌ هەڵەیەک ڕوویدا');
     } finally {
       setLoading(false);
     }
@@ -49,26 +47,28 @@ const SellerPanel = ({ onGoOnline, onGoOffline, isOnline }) => {
     e.preventDefault();
     setLoading(true);
     try {
-      const res = await API.put('/sellers/profile', {
+      await updateDoc(doc(db, 'sellers', user._id), {
         name: profileForm.name,
         description: profileForm.description,
-        location: { ...user?.location, road: profileForm.road }
+        'location.road': profileForm.road
       });
-      updateUser(res.data.seller);
+      updateUser({ name: profileForm.name, description: profileForm.description, location: { ...user?.location, road: profileForm.road } });
       setShowEditProfile(false);
       setMsg('✅ پروفایل نوێ کرایەوە');
       setTimeout(() => setMsg(''), 3000);
     } catch (err) {
-      setMsg('❌ ' + (err.response?.data?.error || 'هەڵەیەک ڕوویدا'));
+      setMsg('❌ هەڵەیەک ڕوویدا');
     } finally {
       setLoading(false);
     }
   };
 
   const handleRemoveProduct = async (productId) => {
+    const productToRemove = user.products?.find(p => p.id === productId);
+    if (!productToRemove) return;
     try {
-      const res = await API.delete(`/sellers/products/${productId}`);
-      updateUser(res.data.seller);
+      await updateDoc(doc(db, 'sellers', user._id), { products: arrayRemove(productToRemove) });
+      updateUser({ products: user.products.filter(p => p.id !== productId) });
     } catch (err) {
       setMsg('❌ هەڵەیەک ڕوویدا');
     }
